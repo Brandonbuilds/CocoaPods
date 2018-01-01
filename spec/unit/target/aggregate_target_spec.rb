@@ -59,10 +59,6 @@ module Pod
         @target.embed_frameworks_script_path.to_s.should.include?('Pods/Target Support Files/Pods/Pods-frameworks.sh')
       end
 
-      it 'returns the absolute path of the prefix header file' do
-        @target.prefix_header_path.to_s.should.include?('Pods/Target Support Files/Pods/Pods-prefix.pch')
-      end
-
       it 'returns the absolute path of the bridge support file' do
         @target.bridge_support_path.to_s.should.include?('Pods/Target Support Files/Pods/Pods.bridgesupport')
       end
@@ -148,6 +144,28 @@ module Pod
               :input_path => '${BUILT_PRODUCTS_DIR}/BananaLib/BananaLib.framework',
               :output_path => '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/BananaLib.framework' },
           ]
+        end
+
+        it 'checks resource paths are empty for dynamic frameworks' do
+          @pod_target.stubs(:should_build?).returns(true)
+          @pod_target.stubs(:requires_frameworks?).returns(true)
+          @pod_target.stubs(:static_framework?).returns(false)
+          @pod_target.stubs(:resource_paths).returns(['MyResources.bundle'])
+          @target.stubs(:bridge_support_file).returns(nil)
+          resource_paths_by_config = @target.resource_paths_by_config
+          resource_paths_by_config['Debug'].should.be.empty
+          resource_paths_by_config['Release'].should.be.empty
+        end
+
+        it 'checks resource paths are included for static frameworks' do
+          @pod_target.stubs(:should_build?).returns(true)
+          @pod_target.stubs(:requires_frameworks?).returns(true)
+          @pod_target.stubs(:static_framework?).returns(true)
+          @pod_target.stubs(:resource_paths).returns(['MyResources.bundle'])
+          @target.stubs(:bridge_support_file).returns(nil)
+          resource_paths_by_config = @target.resource_paths_by_config
+          resource_paths_by_config['Debug'].should == ['MyResources.bundle']
+          resource_paths_by_config['Release'].should == ['MyResources.bundle']
         end
 
         it 'returns non vendored frameworks by config with different release and debug targets' do

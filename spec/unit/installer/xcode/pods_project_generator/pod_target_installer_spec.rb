@@ -74,7 +74,7 @@ module Pod
             it "adds the user's build configurations to the target" do
               @pod_target.user_build_configurations.merge!('AppStore' => :release, 'Test' => :debug)
               @installer.install!
-              @project.targets.first.build_configurations.map(&:name).sort.should == %w( AppStore Debug Release Test        )
+              @project.targets.first.build_configurations.map(&:name).sort.should == %w(AppStore Debug Release Test)
             end
 
             it 'it creates different hash instances for the build settings of various build configurations' do
@@ -200,6 +200,7 @@ module Pod
                 native_test_target.build_configurations.each do |bc|
                   bc.build_settings['PRODUCT_NAME'].should == 'CoconutLib-Unit-Tests'
                   bc.build_settings['CODE_SIGNING_REQUIRED'].should == 'YES'
+                  bc.build_settings['CODE_SIGN_IDENTITY'].should == 'iPhone Developer'
                 end
                 native_test_target.symbol_type.should == :unit_test_bundle
                 @coconut_pod_target.test_native_targets.count.should == 1
@@ -215,6 +216,7 @@ module Pod
                 native_test_target.build_configurations.each do |bc|
                   bc.build_settings['PRODUCT_NAME'].should == 'CoconutLib-Unit-Tests'
                   bc.build_settings['CODE_SIGNING_REQUIRED'].should.be.nil
+                  bc.build_settings['CODE_SIGN_IDENTITY'].should == ''
                 end
                 native_test_target.symbol_type.should == :unit_test_bundle
                 @coconut_pod_target2.test_native_targets.count.should == 1
@@ -272,6 +274,78 @@ module Pod
                 test_resource_bundle_target.build_configurations.each do |bc|
                   bc.base_configuration_reference.real_path.basename.to_s.should == 'CoconutLib.unit.xcconfig'
                   bc.build_settings['CONFIGURATION_BUILD_DIR'].should.be.nil
+                end
+              end
+
+              it 'creates embed frameworks script for test target' do
+                @coconut_pod_target.stubs(:requires_frameworks? => true)
+                @installer.install!
+                script_path = @coconut_pod_target.embed_frameworks_script_path_for_test_type(:unit)
+                script = script_path.read
+                @coconut_pod_target.user_build_configurations.keys.each do |configuration|
+                  script.should.include <<-eos.strip_heredoc
+        if [[ "$CONFIGURATION" == "#{configuration}" ]]; then
+          install_framework "${BUILT_PRODUCTS_DIR}/CoconutLib/CoconutLib.framework"
+        fi
+                  eos
+                end
+              end
+
+              it 'adds the resources bundles for to the copy resources script for test target' do
+                @coconut_spec.test_specs.first.resource_bundle = { 'CoconutLibTestResources' => ['Tests/*.xib'] }
+                @installer.install!
+                script_path = @coconut_pod_target.copy_resources_script_path_for_test_type(:unit)
+                script = script_path.read
+                @coconut_pod_target.user_build_configurations.keys.each do |configuration|
+                  script.should.include <<-eos.strip_heredoc
+        if [[ "$CONFIGURATION" == "#{configuration}" ]]; then
+          install_resource "${PODS_CONFIGURATION_BUILD_DIR}/CoconutLibTestResources.bundle"
+        fi
+                  eos
+                end
+              end
+
+              describe 'app host generation' do
+                before do
+                  @coconut_spec.test_specs.first.requires_app_host = true
+                end
+
+                it 'creates and links app host with an iOS test native target' do
+                  @installer.install!
+                  @project.targets.count.should == 3
+                  app_host_target = @project.targets[2]
+                  app_host_target.name.should == 'AppHost-iOS-Unit-Tests'
+                  app_host_target.symbol_type.should == :application
+                  native_test_target = @project.targets[1]
+                  native_test_target.build_configurations.each do |bc|
+                    bc.build_settings['TEST_HOST'].should == '$(BUILT_PRODUCTS_DIR)/AppHost-iOS-Unit-Tests.app/AppHost-iOS-Unit-Tests'
+                  end
+                  @project.root_object.attributes['TargetAttributes'].should == {
+                    native_test_target.uuid.to_s => {
+                      'TestTargetID' => app_host_target.uuid.to_s,
+                    },
+                  }
+                end
+
+                it 'creates and links app host with an OSX test native target' do
+                  @installer2.install!
+                  @project.targets.count.should == 3
+                  app_host_target = @project.targets[2]
+                  app_host_target.name.should == 'AppHost-macOS-Unit-Tests'
+                  app_host_target.symbol_type.should == :application
+                  app_host_target.build_configurations.each do |bc|
+                    bc.build_settings['PRODUCT_NAME'].should == 'AppHost-macOS-Unit-Tests'
+                    bc.build_settings['PRODUCT_BUNDLE_IDENTIFIER'].should == 'org.cocoapods.${PRODUCT_NAME:rfc1034identifier}'
+                  end
+                  native_test_target = @project.targets[1]
+                  native_test_target.build_configurations.each do |bc|
+                    bc.build_settings['TEST_HOST'].should == '$(BUILT_PRODUCTS_DIR)/AppHost-macOS-Unit-Tests.app/Contents/MacOS/AppHost-macOS-Unit-Tests'
+                  end
+                  @project.root_object.attributes['TargetAttributes'].should == {
+                    native_test_target.uuid.to_s => {
+                      'TestTargetID' => app_host_target.uuid.to_s,
+                    },
+                  }
                 end
               end
             end
@@ -667,9 +741,21 @@ module Pod
 
                 target = @project.native_targets.first
                 build_phase = target.shell_script_build_phases.find do |bp|
-                  bp.name == 'Setup Static Framework Archive'
+                  bp.name == 'Setup Static Framework'
                 end
+                build_phase.shell_script.should.include?('swiftmodule')
+                build_phase.shell_script.should.include?('PrivateHeaders')
                 build_phase.should.not.be.nil
+              end
+
+              it 'verifies that headers in build phase for static libraries are all Project headers' do
+                @pod_target.stubs(:requires_frameworks?).returns(false)
+
+                @installer.install!
+
+                @project.targets.first.headers_build_phase.files.find do |hf|
+                  hf.settings['ATTRIBUTES'].should == ['Project']
+                end
               end
             end
 

@@ -19,14 +19,17 @@ module Pod
             UI.message "- Installing target `#{target.name}` #{target.platform}" do
               add_target
               create_support_files_dir
-              add_test_targets if target.contains_test_specifications?
+              if target.contains_test_specifications?
+                add_test_targets
+                add_test_app_host_targets
+              end
               add_resources_bundle_targets
               add_files_to_build_phases
               create_xcconfig_file
               create_test_xcconfig_files if target.contains_test_specifications?
               if target.requires_frameworks?
                 unless target.static_framework?
-                  create_info_plist_file
+                  create_info_plist_file(target.info_plist_path, native_target, target.version, target.platform)
                 end
                 create_module_map
                 create_umbrella_header do |generator|
@@ -45,8 +48,17 @@ module Pod
                   create_build_phase_to_move_static_framework_archive
                 end
               end
-              unless skip_pch?
-                create_prefix_header
+              unless skip_pch?(target.non_test_specs)
+                path = target.prefix_header_path
+                file_accessors = target.file_accessors.reject { |f| f.spec.test_specification? }
+                create_prefix_header(path, file_accessors, target.platform, [native_target])
+              end
+              unless skip_pch?(target.test_specs)
+                target.supported_test_types.each do |test_type|
+                  path = target.prefix_header_path_for_test_type(test_type)
+                  file_accessors = target.file_accessors.select { |f| f.spec.test_specification? }
+                  create_prefix_header(path, file_accessors, target.platform, target.test_native_targets)
+                end
               end
               create_dummy_source
             end
@@ -54,10 +66,13 @@ module Pod
 
           private
 
+          # @param [Array<Specification>] specs
+          #        the specs to check against whether `.pch` generation should be skipped or not.
+          #
           # @return [Boolean] Whether the target should build a pch file.
           #
-          def skip_pch?
-            target.specs.any? { |spec| spec.prefix_header_file.is_a?(FalseClass) }
+          def skip_pch?(specs)
+            specs.any? { |spec| spec.prefix_header_file.is_a?(FalseClass) }
           end
 
           # Remove the default headers folder path settings for static library pod
@@ -180,6 +195,43 @@ module Pod
             end
           end
 
+          # Adds the test app host targets for the library to the Pods project with the
+          # appropriate build configurations.
+          #
+          # @return [void]
+          #
+          def add_test_app_host_targets
+            target.test_specs.each do |test_spec|
+              next unless test_spec.consumer(target.platform).requires_app_host?
+              name = target.app_host_label(test_spec.test_type)
+              platform_name = target.platform.name
+              app_host_target = project.targets.find { |t| t.name == name }
+              if app_host_target.nil?
+                app_host_target = Pod::Generator::AppTargetHelper.add_app_target(project, platform_name, deployment_target, name)
+                app_host_target.build_configurations.each do |configuration|
+                  configuration.build_settings.merge!(custom_build_settings)
+                  configuration.build_settings['PRODUCT_NAME'] = name
+                  configuration.build_settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'org.cocoapods.${PRODUCT_NAME:rfc1034identifier}'
+                  configuration.build_settings['CODE_SIGN_IDENTITY'] = '' if target.platform == :osx
+                end
+                Pod::Generator::AppTargetHelper.add_app_host_main_file(project, app_host_target, platform_name, name)
+                app_host_info_plist_path = project.path.dirname.+("#{name}/Info.plist")
+                create_info_plist_file(app_host_info_plist_path, app_host_target, '1.0.0', target.platform, :appl)
+              end
+              # Wire all test native targets with the app host.
+              native_test_target = target.native_target_for_spec(test_spec)
+              native_test_target.build_configurations.each do |configuration|
+                test_host = "$(BUILT_PRODUCTS_DIR)/#{name}.app/"
+                test_host << 'Contents/MacOS/' if target.platform == :osx
+                test_host << name.to_s
+                configuration.build_settings['TEST_HOST'] = test_host
+              end
+              target_attributes = project.root_object.attributes['TargetAttributes'] || {}
+              target_attributes[native_test_target.uuid.to_s] = { 'TestTargetID' => app_host_target.uuid.to_s }
+              project.root_object.attributes['TargetAttributes'] = target_attributes
+            end
+          end
+
           # Adds the test targets for the library to the Pods project with the
           # appropriate build configurations.
           #
@@ -190,7 +242,7 @@ module Pod
               product_type = target.product_type_for_test_type(test_type)
               name = target.test_target_label(test_type)
               platform_name = target.platform.name
-              language = target.uses_swift? ? :swift : :objc
+              language = target.all_test_dependent_targets.any?(&:uses_swift?) ? :swift : :objc
               native_test_target = project.new_target(product_type, name, platform_name, deployment_target, nil, language)
               native_test_target.product_reference.name = name
 
@@ -209,6 +261,8 @@ module Pod
                 configuration.build_settings['PRODUCT_NAME'] = name
                 # We must codesign iOS XCTest bundles that contain binary frameworks to allow them to be launchable in the simulator
                 configuration.build_settings['CODE_SIGNING_REQUIRED'] = 'YES' unless target.platform == :osx
+                # For macOS we do not code sign the XCTest bundle because we do not code sign the frameworks either.
+                configuration.build_settings['CODE_SIGN_IDENTITY'] = '' if target.platform == :osx
               end
 
               # Test native targets also need frameworks and resources to be copied over to their xctest bundle.
@@ -267,7 +321,7 @@ module Pod
                 path = target.info_plist_path
                 path.dirname.mkdir unless path.dirname.exist?
                 info_plist_path = path.dirname + "ResourceBundle-#{bundle_name}-#{path.basename}"
-                generator = Generator::InfoPlistFile.new(target, :bundle_package_type => :bndl)
+                generator = Generator::InfoPlistFile.new(target.version, target.platform, :bndl)
                 update_changed_file(generator, info_plist_path)
                 add_file_to_support_group(info_plist_path)
 
@@ -348,7 +402,9 @@ module Pod
           def create_test_target_copy_resources_script(test_type)
             path = target.copy_resources_script_path_for_test_type(test_type)
             pod_targets = target.all_test_dependent_targets
-            resource_paths_by_config = { 'Debug' => pod_targets.flat_map(&:resource_paths) }
+            resource_paths_by_config = target.user_build_configurations.keys.each_with_object({}) do |config, resources_by_config|
+              resources_by_config[config] = pod_targets.flat_map(&:resource_paths)
+            end
             generator = Generator::CopyResourcesScript.new(resource_paths_by_config, target.platform)
             update_changed_file(generator, path)
             add_file_to_support_group(path)
@@ -364,7 +420,9 @@ module Pod
           def create_test_target_embed_frameworks_script(test_type)
             path = target.embed_frameworks_script_path_for_test_type(test_type)
             pod_targets = target.all_test_dependent_targets
-            framework_paths_by_config = { 'Debug' => pod_targets.flat_map(&:framework_paths) }
+            framework_paths_by_config = target.user_build_configurations.keys.each_with_object({}) do |config, paths_by_config|
+              paths_by_config[config] = pod_targets.flat_map(&:framework_paths)
+            end
             generator = Generator::EmbedFrameworksScript.new(framework_paths_by_config)
             update_changed_file(generator, path)
             add_file_to_support_group(path)
@@ -377,7 +435,7 @@ module Pod
           #
           def test_target_swift_debug_hack(test_target_bc)
             return unless test_target_bc.debug?
-            return unless [target, *target.recursive_dependent_targets].any?(&:uses_swift?)
+            return unless target.all_test_dependent_targets.any?(&:uses_swift?)
             ldflags = test_target_bc.build_settings['OTHER_LDFLAGS'] ||= '$(inherited)'
             ldflags << ' -lswiftSwiftOnoneSupport'
           end
@@ -402,7 +460,7 @@ module Pod
             eos
           end
 
-          # Creates a build phase to put the static framework archive in the appropriate framework location
+          # Creates a build phase to put the static framework in the appropriate framework location
           # Since Xcode does not provide template support for static library frameworks, we've built a static library
           # of the form lib{LibraryName}.a. We need to move that to the framework location -
           # {LibraryName}.framework/{LibraryName}.
@@ -410,11 +468,17 @@ module Pod
           # @return [void]
           #
           def create_build_phase_to_move_static_framework_archive
-            build_phase = native_target.new_shell_script_build_phase('Setup Static Framework Archive')
+            build_phase = native_target.new_shell_script_build_phase('Setup Static Framework')
             build_phase.shell_script = <<-eos.strip_heredoc
           mkdir -p "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/Modules"
-          cp "${BUILT_PRODUCTS_DIR}/lib${PRODUCT_NAME}.a" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/${PRODUCT_NAME}"
-          cp "${MODULEMAP_FILE}" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/Modules/module.modulemap"
+          # The fat library archive is at a file symbolic link when archiving, so use -L option
+          rsync -tL "${BUILT_PRODUCTS_DIR}/lib${PRODUCT_NAME}.a" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/${PRODUCT_NAME}"
+          rsync -t "${MODULEMAP_FILE}" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/Modules/module.modulemap"
+          # If there's a .swiftmodule, copy it into the framework's Modules folder
+          rsync -tr "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}".swiftmodule "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/Modules/" 2>/dev/null || :
+          # If archiving, Headers copy is needed
+          rsync -tr "${TARGET_BUILD_DIR}/${PRODUCT_NAME}.framework/Headers" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/" 2>/dev/null || :
+          rsync -tr "${TARGET_BUILD_DIR}/${PRODUCT_NAME}.framework/PrivateHeaders" "${BUILT_PRODUCTS_DIR}/${PRODUCT_NAME}.framework/" 2>/dev/null || :
             eos
           end
 
@@ -422,17 +486,30 @@ module Pod
           # to the platform of the target. This file also include any prefix header
           # content reported by the specification of the pods.
           #
+          # @param [Pathname] path
+          #        the path to generate the prefix header for.
+          #
+          # @param [Array<Sandbox::FileAccessor>] file_accessors
+          #        the file accessors to use for this prefix header that point to a path of a prefix header.
+          #
+          # @param [Platform] platform
+          #        the platform to use for this prefix header.
+          #
+          # @param [Array<PBXNativetarget>] native_targets
+          #        the native targets on which the prefix header should be configured for.
+          #
           # @return [void]
           #
-          def create_prefix_header
-            path = target.prefix_header_path
-            generator = Generator::PrefixHeader.new(target.file_accessors, target.platform)
+          def create_prefix_header(path, file_accessors, platform, native_targets)
+            generator = Generator::PrefixHeader.new(file_accessors, platform)
             update_changed_file(generator, path)
             add_file_to_support_group(path)
 
-            native_target.build_configurations.each do |c|
-              relative_path = path.relative_path_from(project.path.dirname)
-              c.build_settings['GCC_PREFIX_HEADER'] = relative_path.to_s
+            native_targets.each do |native_target|
+              native_target.build_configurations.each do |c|
+                relative_path = path.relative_path_from(project.path.dirname)
+                c.build_settings['GCC_PREFIX_HEADER'] = relative_path.to_s
+              end
             end
           end
 
@@ -441,7 +518,7 @@ module Pod
             :osx => Version.new('10.8'),
             :watchos => Version.new('2.0'),
             :tvos => Version.new('9.0'),
-          }
+          }.freeze
 
           # Returns the compiler flags for the source files of the given specification.
           #
@@ -559,7 +636,9 @@ module Pod
 
           def add_header(build_file, public_headers, private_headers, native_target)
             file_ref = build_file.file_ref
-            acl = if public_headers.include?(file_ref.real_path)
+            acl = if !target.requires_frameworks? # Headers are already rooted at ${PODS_ROOT}/Headers/P*/[pod]/...
+                    'Project'
+                  elsif public_headers.include?(file_ref.real_path)
                     'Public'
                   elsif private_headers.include?(file_ref.real_path)
                     'Private'

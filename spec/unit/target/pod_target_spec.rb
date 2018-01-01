@@ -109,6 +109,53 @@ module Pod
 
         @pod_target.should_build?.should == false
       end
+
+      it 'builds a pod target if there are no actual source files but there are script phases' do
+        fa = Sandbox::FileAccessor.new(nil, @pod_target)
+        fa.stubs(:source_files).returns([Pathname.new('foo.h')])
+        @pod_target.stubs(:file_accessors).returns([fa])
+        @pod_target.root_spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"' }
+
+        @pod_target.should_build?.should == true
+      end
+    end
+
+    describe 'target version' do
+      it 'handles when the version is more than 3 numeric parts' do
+        version = Version.new('0.2.0.1')
+        @pod_target.root_spec.stubs(:version).returns(version)
+        @pod_target.version.should == '0.2.0'
+      end
+
+      it 'handles when the version is less than 3 numeric parts' do
+        version = Version.new('0.2')
+        @pod_target.root_spec.stubs(:version).returns(version)
+        @pod_target.version.should == '0.2.0'
+      end
+
+      it 'handles when the version is a pre-release' do
+        version = Version.new('1.0.0-beta.1')
+        @pod_target.root_spec.stubs(:version).returns(version)
+        @pod_target.version.should == '1.0.0'
+
+        version = Version.new('1.0-beta.5')
+        @pod_target.root_spec.stubs(:version).returns(version)
+        @pod_target.version.should == '1.0.0'
+      end
+    end
+
+    describe 'swift version' do
+      it 'uses the swift version defined in the specification' do
+        @pod_target.root_spec.stubs(:swift_version).returns('3.0')
+        @target_definition.stubs(:swift_version).returns('2.3')
+        @pod_target.swift_version.should == '3.0'
+      end
+
+      it 'uses the swift version defined by the target definitions if no swift version is specifed in the spec' do
+        @pod_target.root_spec.stubs(:swift_version).returns(nil)
+        @target_definition.stubs(:swift_version).returns('2.3')
+        @pod_target.swift_version.should == '2.3'
+      end
     end
 
     describe 'Support files' do
@@ -181,6 +228,10 @@ module Pod
         @pod_target.scoped.first.build_product_path.should == '${PODS_CONFIGURATION_BUILD_DIR}/BananaLib-Pods/libBananaLib-Pods.a'
         @pod_target.build_product_path('$BUILT_PRODUCTS_DIR').should == '$BUILT_PRODUCTS_DIR/BananaLib/libBananaLib.a'
         @pod_target.scoped.first.build_product_path('$BUILT_PRODUCTS_DIR').should == '$BUILT_PRODUCTS_DIR/BananaLib-Pods/libBananaLib-Pods.a'
+      end
+
+      it 'returns prefix header path' do
+        @pod_target.prefix_header_path.to_s.should.include 'Pods/Target Support Files/BananaLib/BananaLib-prefix.pch'
       end
     end
 
@@ -309,13 +360,28 @@ module Pod
         end
       end
 
+      describe 'script phases support' do
+        before do
+          @pod_target = fixture_pod_target('coconut-lib/CoconutLib.podspec')
+        end
+
+        it 'returns false if it does not contain test specifications' do
+          @pod_target.contains_script_phases?.should == false
+        end
+
+        it 'returns true if it contains test specifications' do
+          @pod_target.root_spec.script_phase = { :name => 'Hello World', :script => 'echo "Hello World"' }
+          @pod_target.contains_script_phases?.should == true
+        end
+      end
+
       describe 'test spec support' do
         before do
           @coconut_spec = fixture_spec('coconut-lib/CoconutLib.podspec')
           @test_spec_target_definition = Podfile::TargetDefinition.new('Pods', nil)
           @test_spec_target_definition.abstract = false
           @test_pod_target = PodTarget.new([@coconut_spec, *@coconut_spec.recursive_subspecs], [@test_spec_target_definition], config.sandbox)
-          @test_pod_target.stubs(:platform).returns(:ios)
+          @test_pod_target.stubs(:platform).returns(Platform.new(:ios, '6.0'))
         end
 
         it 'returns that it has test specifications' do
@@ -328,6 +394,10 @@ module Pod
 
         it 'returns test label based on test type' do
           @test_pod_target.test_target_label(:unit).should == 'CoconutLib-Unit-Tests'
+        end
+
+        it 'returns app host label based on test type' do
+          @test_pod_target.app_host_label(:unit).should == 'AppHost-iOS-Unit-Tests'
         end
 
         it 'returns the correct native target based on the consumer provided' do
@@ -365,6 +435,10 @@ module Pod
 
         it 'returns correct embed frameworks script path for test unit test type' do
           @test_pod_target.embed_frameworks_script_path_for_test_type(:unit).to_s.should.include 'Pods/Target Support Files/CoconutLib/CoconutLib-Unit-Tests-frameworks.sh'
+        end
+
+        it 'returns correct prefix header path for test unit test type' do
+          @test_pod_target.prefix_header_path_for_test_type(:unit).to_s.should.include 'Pods/Target Support Files/CoconutLib/CoconutLib-Unit-Tests-prefix.pch'
         end
 
         it 'returns the correct resource path for test resource bundles' do

@@ -95,10 +95,18 @@ module Pod
       end
     end
 
-    # @return [String] the Swift version for the target.
+    # @return [String] the Swift version for the target. If the pod author has provided a swift version
+    #                  then that is the one returned, otherwise the Swift version is determined by the user
+    #                  targets that include this pod target.
     #
     def swift_version
-      target_definitions.map(&:swift_version).compact.uniq.first
+      spec_swift_version || target_definitions.map(&:swift_version).compact.uniq.first
+    end
+
+    # @return [String] the Swift version within the root spec. Might be `nil` if none is set.
+    #
+    def spec_swift_version
+      root_spec.swift_version
     end
 
     # @note   The deployment target for the pod target is the maximum of all
@@ -163,7 +171,7 @@ module Pod
       @should_build = begin
         source_files = file_accessors.flat_map(&:source_files)
         source_files -= file_accessors.flat_map(&:headers)
-        !source_files.empty?
+        !source_files.empty? || contains_script_phases?
       end
     end
 
@@ -185,16 +193,47 @@ module Pod
       end
     end
 
+    # @return [Array<Hash{Symbol=>String}>] An array of hashes where each hash represents a single script phase.
+    #
+    def script_phases
+      spec_consumers.map(&:script_phases).flatten
+    end
+
+    # @return [Boolean] Whether the target contains any script phases.
+    #
+    def contains_script_phases?
+      !script_phases.empty?
+    end
+
+    # @return [Hash{Array => Specification}] a hash where the keys are the test native targets and the value
+    #         an array of all the test specs associated with this native target.
+    #
+    def test_specs_by_native_target
+      test_specs.group_by { |test_spec| native_target_for_spec(test_spec) }
+    end
+
     # @return [Boolean] Whether the target has any tests specifications.
     #
     def contains_test_specifications?
       specs.any?(&:test_specification?)
     end
 
+    # @return [Array<Specification>] All of the test specs within this target.
+    #
+    def test_specs
+      specs.select(&:test_specification?)
+    end
+
+    # @return [Array<Specification>] All of the non test specs within this target.
+    #
+    def non_test_specs
+      specs.reject(&:test_specification?)
+    end
+
     # @return [Array<Symbol>] All of the test supported types within this target.
     #
     def supported_test_types
-      specs.select(&:test_specification?).map(&:test_type).uniq
+      test_specs.map(&:test_type).uniq
     end
 
     # Returns the framework paths associated with this target. By default all paths include the framework paths
@@ -207,36 +246,35 @@ module Pod
     #         this target depends upon.
     #
     def framework_paths(include_test_spec_paths = true)
-      @framework_paths ||= Hash.new do |h, key|
-        h[key] = begin
-          accessors = file_accessors
-          accessors = accessors.reject { |a| a.spec.test_specification? } unless include_test_spec_paths
-          frameworks = []
-          accessors.flat_map(&:vendored_dynamic_artifacts).map do |framework_path|
-            relative_path_to_sandbox = framework_path.relative_path_from(sandbox.root)
-            framework = { :name => framework_path.basename.to_s,
-                          :input_path => "${PODS_ROOT}/#{relative_path_to_sandbox}",
-                          :output_path => "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/#{framework_path.basename}" }
-            # Until this can be configured, assume the dSYM file uses the file name as the framework.
-            # See https://github.com/CocoaPods/CocoaPods/issues/1698
-            dsym_name = "#{framework_path.basename}.dSYM"
-            dsym_path = Pathname.new("#{framework_path.dirname}/#{dsym_name}")
-            if dsym_path.exist?
-              framework[:dsym_name] = dsym_name
-              framework[:dsym_input_path] = "${PODS_ROOT}/#{relative_path_to_sandbox}.dSYM"
-              framework[:dsym_output_path] = "${DWARF_DSYM_FOLDER_PATH}/#{dsym_name}"
-            end
-            frameworks << framework
+      @framework_paths ||= {}
+      return @framework_paths[include_test_spec_paths] if @framework_paths.key?(include_test_spec_paths)
+      @framework_paths[include_test_spec_paths] = begin
+        accessors = file_accessors
+        accessors = accessors.reject { |a| a.spec.test_specification? } unless include_test_spec_paths
+        frameworks = []
+        accessors.flat_map(&:vendored_dynamic_artifacts).map do |framework_path|
+          relative_path_to_sandbox = framework_path.relative_path_from(sandbox.root)
+          framework = { :name => framework_path.basename.to_s,
+                        :input_path => "${PODS_ROOT}/#{relative_path_to_sandbox}",
+                        :output_path => "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/#{framework_path.basename}" }
+          # Until this can be configured, assume the dSYM file uses the file name as the framework.
+          # See https://github.com/CocoaPods/CocoaPods/issues/1698
+          dsym_name = "#{framework_path.basename}.dSYM"
+          dsym_path = Pathname.new("#{framework_path.dirname}/#{dsym_name}")
+          if dsym_path.exist?
+            framework[:dsym_name] = dsym_name
+            framework[:dsym_input_path] = "${PODS_ROOT}/#{relative_path_to_sandbox}.dSYM"
+            framework[:dsym_output_path] = "${DWARF_DSYM_FOLDER_PATH}/#{dsym_name}"
           end
-          if should_build? && requires_frameworks? && !static_framework?
-            frameworks << { :name => product_name,
-                            :input_path => build_product_path('${BUILT_PRODUCTS_DIR}'),
-                            :output_path => "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/#{product_name}" }
-          end
-          frameworks
+          frameworks << framework
         end
+        if should_build? && requires_frameworks? && !static_framework?
+          frameworks << { :name => product_name,
+                          :input_path => build_product_path('${BUILT_PRODUCTS_DIR}'),
+                          :output_path => "${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/#{product_name}" }
+        end
+        frameworks
       end
-      @framework_paths[include_test_spec_paths]
     end
 
     # Returns the resource paths associated with this target. By default all paths include the resource paths
@@ -248,22 +286,21 @@ module Pod
     # @return [Array<String>] The resource and resource bundle paths this target depends upon.
     #
     def resource_paths(include_test_spec_paths = true)
-      @resource_paths ||= Hash.new do |h, key|
-        h[key] = begin
-          accessors = file_accessors
-          accessors = accessors.reject { |a| a.spec.test_specification? } unless include_test_spec_paths
-          resource_paths = accessors.flat_map do |accessor|
-            accessor.resources.flat_map { |res| "${PODS_ROOT}/#{res.relative_path_from(sandbox.project.path.dirname)}" }
-          end
-          resource_bundles = accessors.flat_map do |accessor|
-            prefix = Generator::XCConfig::XCConfigHelper::CONFIGURATION_BUILD_DIR_VARIABLE
-            prefix = configuration_build_dir unless accessor.spec.test_specification?
-            accessor.resource_bundles.keys.map { |name| "#{prefix}/#{name.shellescape}.bundle" }
-          end
-          resource_paths + resource_bundles
+      @resource_paths ||= {}
+      return @resource_paths[include_test_spec_paths] if @resource_paths.key?(include_test_spec_paths)
+      @resource_paths[include_test_spec_paths] = begin
+        accessors = file_accessors
+        accessors = accessors.reject { |a| a.spec.test_specification? } unless include_test_spec_paths
+        resource_paths = accessors.flat_map do |accessor|
+          accessor.resources.flat_map { |res| "${PODS_ROOT}/#{res.relative_path_from(sandbox.project.path.dirname)}" }
         end
+        resource_bundles = accessors.flat_map do |accessor|
+          prefix = Generator::XCConfig::XCConfigHelper::CONFIGURATION_BUILD_DIR_VARIABLE
+          prefix = configuration_build_dir unless accessor.spec.test_specification?
+          accessor.resource_bundles.keys.map { |name| "#{prefix}/#{name.shellescape}.bundle" }
+        end
+        resource_paths + resource_bundles
       end
-      @resource_paths[include_test_spec_paths]
     end
 
     # Returns the corresponding native target to use based on the provided specification.
@@ -347,6 +384,15 @@ module Pod
     end
 
     # @param  [Symbol] test_type
+    #         The test type to use for producing the test label.
+    #
+    # @return [String] The label of the app host label to use given the platform and test type.
+    #
+    def app_host_label(test_type)
+      "AppHost-#{Platform.string_name(platform.symbolic_name)}-#{test_type.capitalize}-Tests"
+    end
+
+    # @param  [Symbol] test_type
     #         The test type this embed frameworks script path is for.
     #
     # @return [Pathname] The absolute path of the copy resources script for the given test type.
@@ -362,6 +408,21 @@ module Pod
     #
     def embed_frameworks_script_path_for_test_type(test_type)
       support_files_dir + "#{test_target_label(test_type)}-frameworks.sh"
+    end
+
+    # @return [Pathname] the absolute path of the prefix header file.
+    #
+    def prefix_header_path
+      support_files_dir + "#{label}-prefix.pch"
+    end
+
+    # @param  [Symbol] test_type
+    #         The test type prefix header path is for.
+    #
+    # @return [Pathname] the absolute path of the prefix header file for the given test type.
+    #
+    def prefix_header_path_for_test_type(test_type)
+      support_files_dir + "#{test_target_label(test_type)}-prefix.pch"
     end
 
     # @return [Array<String>] The names of the Pods on which this target
@@ -497,6 +558,13 @@ module Pod
     #
     def pod_target_srcroot
       "${PODS_ROOT}/#{sandbox.pod_dir(pod_name).relative_path_from(sandbox.root)}"
+    end
+
+    # @return [String] The version associated with this target
+    #
+    def version
+      version = root_spec.version
+      [version.major, version.minor, version.patch].join('.')
     end
 
     private

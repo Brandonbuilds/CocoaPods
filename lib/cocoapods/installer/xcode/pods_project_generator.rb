@@ -4,7 +4,7 @@ module Pod
       # The {PodsProjectGenerator} handles generation of the 'Pods/Pods.xcodeproj'
       #
       class PodsProjectGenerator
-        require 'cocoapods/installer/pods_project_integrator/pod_target_integrator'
+        require 'cocoapods/installer/xcode/pods_project_generator/pod_target_integrator'
         require 'cocoapods/installer/xcode/pods_project_generator/target_installer'
         require 'cocoapods/installer/xcode/pods_project_generator/pod_target_installer'
         require 'cocoapods/installer/xcode/pods_project_generator/file_references_installer'
@@ -63,7 +63,7 @@ module Pod
           prepare
           install_file_references
           install_libraries
-          integrate_test_targets
+          integrate_targets
           set_target_dependencies
         end
 
@@ -124,6 +124,8 @@ module Pod
             analysis_result.all_user_build_configurations.each do |name, type|
               @project.add_build_configuration(name, type)
             end
+            # Reset symroot just in case the user has added a new build configuration other than 'Debug' or 'Release'.
+            @project.symroot = Pod::Project::LEGACY_BUILD_ROOT
 
             pod_names = pod_targets.map(&:pod_name).uniq
             pod_names.each do |pod_name|
@@ -177,12 +179,12 @@ module Pod
           end
         end
 
-        def integrate_test_targets
-          pod_targets_with_test_targets = pod_targets.reject { |pt| pt.test_native_targets.empty? }
-          unless pod_targets_with_test_targets.empty?
-            UI.message '- Integrating test targets' do
-              pod_targets_with_test_targets.each do |pod_target|
-                Pod::Installer::PodTargetIntegrator.new(pod_target).integrate!
+        def integrate_targets
+          pod_targets_to_integrate = pod_targets.select { |pt| !pt.test_native_targets.empty? || pt.contains_script_phases? }
+          unless pod_targets_to_integrate.empty?
+            UI.message '- Integrating targets' do
+              pod_targets_to_integrate.each do |pod_target|
+                PodTargetIntegrator.new(pod_target).integrate!
               end
             end
           end
@@ -190,13 +192,14 @@ module Pod
 
         def add_system_framework_dependencies
           # @TODO: Add Specs
-          pod_targets.sort_by(&:name).each do |pod_target|
-            pod_target.file_accessors.each do |file_accessor|
-              file_accessor.spec_consumer.frameworks.each do |framework|
-                if pod_target.should_build?
-                  pod_target.native_target.add_system_framework(framework)
-                end
-              end
+          pod_targets.select(&:should_build?).sort_by(&:name).each do |pod_target|
+            test_file_accessors, file_accessors = pod_target.file_accessors.partition { |fa| fa.spec.test_specification? }
+            file_accessors.each do |file_accessor|
+              add_system_frameworks_to_native_target(file_accessor, pod_target.native_target)
+            end
+            test_file_accessors.each do |test_file_accessor|
+              native_target = pod_target.native_target_for_spec(test_file_accessor.spec)
+              add_system_frameworks_to_native_target(test_file_accessor, native_target)
             end
           end
         end
@@ -227,10 +230,11 @@ module Pod
               aggregate_target.native_target.add_dependency(pod_target.native_target)
               configure_app_extension_api_only_for_target(pod_target) if is_app_extension
 
+              add_dependent_targets_to_native_target(pod_target.dependent_targets,
+                                                     pod_target.native_target, is_app_extension,
+                                                     pod_target.requires_frameworks? && !pod_target.static_framework?,
+                                                     frameworks_group)
               unless pod_target.static_framework?
-                add_dependent_targets_to_native_target(pod_target.dependent_targets,
-                                                       pod_target.native_target, is_app_extension,
-                                                       pod_target.requires_frameworks?, frameworks_group)
                 add_pod_target_test_dependencies(pod_target, frameworks_group)
               end
             end
@@ -285,11 +289,16 @@ module Pod
 
         def add_pod_target_test_dependencies(pod_target, frameworks_group)
           test_dependent_targets = pod_target.all_test_dependent_targets
-          pod_target.test_native_targets.each do |test_native_target|
+          pod_target.test_specs_by_native_target.each do |test_native_target, test_specs|
             test_dependent_targets.reject(&:should_build?).each do |test_dependent_target|
               add_resource_bundles_to_native_target(test_dependent_target, test_native_target)
             end
             add_dependent_targets_to_native_target(test_dependent_targets, test_native_target, false, pod_target.requires_frameworks?, frameworks_group)
+            test_spec_consumers = test_specs.map { |test_spec| test_spec.consumer(pod_target.platform) }
+            if test_spec_consumers.any?(&:requires_app_host?)
+              app_host_target = project.targets.find { |t| t.name == pod_target.app_host_label(test_specs.first.test_type) }
+              test_native_target.add_dependency(app_host_target)
+            end
           end
         end
 
@@ -304,6 +313,12 @@ module Pod
                   frameworks_group.new_product_ref_for_target(pod_dependency_target.product_basename, pod_dependency_target.product_type)
               native_target.frameworks_build_phase.add_file_reference(product_ref, true)
             end
+          end
+        end
+
+        def add_system_frameworks_to_native_target(file_accessor, native_target)
+          file_accessor.spec_consumer.frameworks.each do |framework|
+            native_target.add_system_framework(framework)
           end
         end
 
