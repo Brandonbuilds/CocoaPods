@@ -152,7 +152,7 @@ module Pod
     def pod_dir(name)
       root_name = Specification.root_name(name)
       if local?(root_name)
-        Pathname.new(development_pods[root_name].dirname)
+        Pathname.new(development_pods[root_name])
       else
         sources_root + root_name
       end
@@ -211,7 +211,7 @@ module Pod
     def specification(name)
       if file = specification_path(name)
         original_path = development_pods[name]
-        Specification.from_file(original_path || file)
+        Dir.chdir(original_path || Dir.pwd) { Specification.from_file(file) }
       end
     end
 
@@ -239,8 +239,8 @@ module Pod
 
     # Stores a specification in the `Local Podspecs` folder.
     #
-    # @param  [String] name
-    #         the name of the pod
+    # @param  [Sandbox] sandbox
+    #         the sandbox where the podspec should be stored.
     #
     # @param  [String, Pathname] podspec
     #         The contents of the specification (String) or the path to a
@@ -248,6 +248,8 @@ module Pod
     #
     # @return [void]
     #
+    # @todo   Store all the specifications (including those not originating
+    #         from external sources) so users can check them.
     #
     def store_podspec(name, podspec, _external_source = false, json = false)
       file_name = json ? "#{name}.podspec.json" : "#{name}.podspec"
@@ -349,8 +351,8 @@ module Pod
     # @param  [String] name
     #         The name of the Pod.
     #
-    # @param  [Pathname, String] path
-    #         The path to the local Podspec
+    # @param  [#to_s] path
+    #         The local path where the Pod is stored.
     #
     # @param  [Bool] was_absolute
     #         True if the specified local path was absolute.
@@ -359,12 +361,11 @@ module Pod
     #
     def store_local_path(name, path, was_absolute = false)
       root_name = Specification.root_name(name)
-      path = Pathname.new(path) unless path.is_a?(Pathname)
-      development_pods[root_name] = path
+      development_pods[root_name] = path.to_s
       @pods_with_absolute_path << root_name if was_absolute
     end
 
-    # @return [Hash{String=>Pathname}] The path of the Pods' podspecs with a local source
+    # @return [Hash{String=>String}] The path of the Pods with a local source
     #         grouped by their root name.
     #
     # @todo   Rename (e.g. `pods_with_local_path`)
@@ -379,19 +380,8 @@ module Pod
     # @return [Bool] Whether the Pod is locally sourced.
     #
     def local?(name)
-      !local_podspec(name).nil?
-    end
-
-    # @param  [String] name
-    #         The name of a locally specified Pod
-    #
-    # @return [Pathname] Path to the local Podspec of the Pod
-    #
-    def local_podspec(name)
       root_name = Specification.root_name(name)
-      if path = development_pods[root_name]
-        Pathname.new(path)
-      end
+      !development_pods[root_name].nil?
     end
 
     #-------------------------------------------------------------------------#

@@ -211,46 +211,6 @@ module Pod
         @accessor.license.should == @root + 'LICENSE'
       end
 
-      it 'returns the docs of the specification' do
-        @accessor.docs.should == [
-          @root + 'docs/guide1.md',
-          @root + 'docs/subdir/guide2.md',
-        ]
-      end
-
-      it 'returns the podspecs of the specification' do
-        @accessor.specs.should == [
-          @root + 'BananaLib.podspec',
-        ]
-      end
-
-      it 'returns the matching podspec of the specification' do
-        @accessor.stubs(:specs).returns([@root + 'BananaLib.podspec', @root + 'OtherLib.podspec'])
-        @accessor.send(:podspec_file).should == @root + 'BananaLib.podspec'
-      end
-
-      it 'returns the developer files of the specification' do
-        @accessor.developer_files.should == [
-          @root + 'Banana.modulemap',
-          @root + 'BananaLib.podspec',
-          @root + 'Classes/BananaLib.pch',
-          @root + 'LICENSE',
-          @root + 'README',
-          @root + 'docs/guide1.md',
-          @root + 'docs/subdir/guide2.md',
-        ]
-      end
-
-      it 'does not return auto-detected developer files when there are multiple podspecs' do
-        @accessor.stubs(:specs).returns([@root + 'BananaLib.podspec', @root + 'OtherLib.podspec'])
-        @accessor.developer_files.should == [
-          @root + 'Banana.modulemap',
-          @root + 'BananaLib.podspec',
-          @root + 'Classes/BananaLib.pch',
-          @root + 'LICENSE',
-        ]
-      end
-
       #--------------------------------------#
 
       it 'respects the exclude files' do
@@ -297,7 +257,7 @@ module Pod
           file_patterns = ['Classes/*.{h,m,d}', 'Vendor', 'framework/Source/*.h']
           options = {
             :exclude_patterns => ['Classes/**/osx/**/*', 'Resources/**/osx/**/*'],
-            :dir_pattern => '*{.m,.mm,.i,.c,.cc,.cxx,.cpp,.c++,.swift,.h,.hh,.hpp,.ipp,.tpp,.hxx,.def,.inl}',
+            :dir_pattern => '*{.m,.mm,.i,.c,.cc,.cxx,.cpp,.c++,.swift,.h,.hh,.hpp,.ipp,.tpp,.hxx,.def}',
             :include_dirs => false,
           }
           @spec.exclude_files = options[:exclude_patterns]
