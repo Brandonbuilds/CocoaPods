@@ -6,8 +6,6 @@ module Pod
   # This class is used to represent both the targets and their libraries.
   #
   class Target
-    DEFAULT_VERSION = '1.0.0'.freeze
-
     # @return [Sandbox] The sandbox where the Pods should be installed.
     #
     attr_reader :sandbox
@@ -158,6 +156,12 @@ module Pod
       support_files_dir + "#{label}.modulemap"
     end
 
+    # @return [Pathname] the absolute path of the prefix header file.
+    #
+    def prefix_header_path
+      support_files_dir + "#{label}-prefix.pch"
+    end
+
     # @return [Pathname] the absolute path of the bridge support file.
     #
     def bridge_support_path
@@ -174,12 +178,6 @@ module Pod
     #
     def dummy_source_path
       support_files_dir + "#{label}-dummy.m"
-    end
-
-    # @return [String] The version associated with this target
-    #
-    def version
-      DEFAULT_VERSION
     end
 
     #-------------------------------------------------------------------------#

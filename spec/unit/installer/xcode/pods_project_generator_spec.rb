@@ -55,7 +55,7 @@ module Pod
             @generator = @installer.send(:create_generator)
           end
 
-          describe '#prepare' do
+          describe 'Preparing' do
             before do
               @generator.send(:prepare)
             end
@@ -69,13 +69,6 @@ module Pod
               @generator.project.build_settings('Test')['STRIP_INSTALLED_PRODUCT'].should == 'NO'
               @generator.project.build_settings('Release')['STRIP_INSTALLED_PRODUCT'].should == 'NO'
               @generator.project.build_settings('App Store')['STRIP_INSTALLED_PRODUCT'].should == 'NO'
-            end
-
-            it 'sets the SYMROOT to the default value for all configurations for the whole project' do
-              @generator.project.build_settings('Debug')['SYMROOT'].should == Pod::Project::LEGACY_BUILD_ROOT
-              @generator.project.build_settings('Test')['SYMROOT'].should == Pod::Project::LEGACY_BUILD_ROOT
-              @generator.project.build_settings('Release')['SYMROOT'].should == Pod::Project::LEGACY_BUILD_ROOT
-              @generator.project.build_settings('App Store')['SYMROOT'].should == Pod::Project::LEGACY_BUILD_ROOT
             end
 
             it 'creates the Pods project' do
@@ -131,7 +124,6 @@ module Pod
             it 'install the targets of the Pod project' do
               spec = fixture_spec('banana-lib/BananaLib.podspec')
               target_definition = Podfile::TargetDefinition.new(:default, nil)
-              target_definition.set_platform(:ios, '8.0')
               target_definition.abstract = false
               target_definition.store_pod('BananaLib')
               pod_target = PodTarget.new([spec], [target_definition], config.sandbox)
@@ -144,7 +136,6 @@ module Pod
             it 'does not skip empty pod targets' do
               spec = fixture_spec('banana-lib/BananaLib.podspec')
               target_definition = Podfile::TargetDefinition.new(:default, nil)
-              target_definition.set_platform(:ios, '8.0')
               target_definition.abstract = false
               pod_target = PodTarget.new([spec], [target_definition], config.sandbox)
               @generator.stubs(:aggregate_targets).returns([])
@@ -271,7 +262,7 @@ module Pod
 
             it 'adds all test dependent targets to test native targets' do
               mock_native_target = mock('CoconutLib')
-              mock_test_native_target = mock('CoconutLib-Unit-Tests', :symbol_type => :unit_test_bundle)
+              mock_test_native_target = mock('CoconutLib-Unit-Tests')
 
               dependent_native_target = mock('DependentNativeTarget')
               test_dependent_native_target = mock('TestDependentNativeTarget')
@@ -300,31 +291,10 @@ module Pod
               @generator.send(:set_target_dependencies)
             end
 
-            it 'adds all test dependent targets to test native targets for static frameworks' do
-              mock_native_target = mock('CoconutLib')
-              dependent_native_target = mock('DependentNativeTarget')
-
-              dependent_target = mock('dependent-target')
-              dependent_target.stubs(:should_build?).returns(true)
-              dependent_target.stubs(:native_target).returns(dependent_native_target)
-
-              @pod_target.stubs(:native_target).returns(mock_native_target)
-              @pod_target.stubs(:dependent_targets).returns([dependent_target])
-              @pod_target.stubs(:should_build? => true)
-              @pod_target.stubs(:static_framework? => true)
-              @mock_target.expects(:add_dependency).with(mock_native_target)
-
-              mock_native_target.expects(:add_dependency).with(dependent_native_target)
-              mock_native_target.expects(:add_dependency).with(mock_native_target).never
-
-              @generator.send(:set_target_dependencies)
-            end
-
             it 'adds dependencies to pod targets that are not part of any aggregate target' do
               @target.stubs(:pod_targets).returns([])
               @generator.expects(:pod_targets).returns([@pod_target])
               mock_native_target = mock('CoconutLib')
-              mock_test_native_target = mock('CoconutLib-Unit-Tests', :symbol_type => :unit_test_bundle)
 
               dependent_native_target = mock('DependentNativeTarget')
               dependent_target = mock('dependent-target', :dependent_targets => [])
@@ -332,20 +302,18 @@ module Pod
               dependent_target.stubs(:native_target).returns(dependent_native_target)
 
               @pod_target.stubs(:native_target).returns(mock_native_target)
-              @pod_target.stubs(:test_native_targets).returns([mock_test_native_target])
+              @pod_target.stubs(:test_native_targets).returns([])
               @pod_target.stubs(:dependent_targets).returns([dependent_target])
               @pod_target.stubs(:test_dependent_targets).returns([])
               @pod_target.stubs(:should_build? => true)
 
               mock_native_target.expects(:add_dependency).with(dependent_native_target)
-              mock_test_native_target.expects(:add_dependency).with(dependent_native_target)
-              mock_test_native_target.expects(:add_dependency).with(mock_native_target)
 
               @generator.send(:set_target_dependencies)
             end
 
             it 'adds test dependencies to test native targets for a pod target that should not be built' do
-              mock_test_native_target = mock('CoconutLib-Unit-Tests', :symbol_type => :unit_test_bundle)
+              mock_test_native_target = mock('CoconutLib-Unit-Tests')
               test_dependent_native_target = mock('TestDependentNativeTarget')
               test_dependent_target = mock('dependent-test-target', :should_build? => true, :native_target => test_dependent_native_target)
               test_dependent_target.expects(:should_build?).returns(true)
@@ -360,7 +328,7 @@ module Pod
             end
 
             it 'sets resource bundles for not build pods as target dependencies of the test target' do
-              mock_test_native_target = mock('CoconutLib-Unit-Tests', :symbol_type => :unit_test_bundle)
+              mock_test_native_target = mock('CoconutLib-Unit-Tests')
 
               @pod_target.stubs(:test_native_targets).returns([mock_test_native_target])
               @pod_target.stubs(:test_dependent_targets).returns([])
@@ -369,26 +337,6 @@ module Pod
 
               @mock_target.expects(:add_dependency).with('dummy')
               mock_test_native_target.expects(:add_dependency).with('dummy')
-
-              @generator.send(:set_target_dependencies)
-            end
-
-            it 'sets the app host dependency target to the test native target if test spec requires app host' do
-              mock_app_host_target = mock(:name => 'AppHost-iOS-Unit-Tests')
-              @generator.project.stubs(:targets).returns([mock_app_host_target])
-
-              mock_test_native_target = mock('CoconutLib-Unit-Tests', :symbol_type => :unit_test_bundle)
-              test_dependent_native_target = mock('TestDependentNativeTarget')
-              test_dependent_target = mock('dependent-test-target', :should_build? => true, :native_target => test_dependent_native_target)
-              test_dependent_target.expects(:should_build?).returns(true)
-
-              @pod_target.test_specs.first.requires_app_host = true
-              @pod_target.stubs(:test_native_targets).returns([mock_test_native_target])
-              @pod_target.stubs(:all_test_dependent_targets).returns([test_dependent_target])
-              @pod_target.stubs(:should_build? => false)
-
-              mock_test_native_target.expects(:add_dependency).with(test_dependent_native_target)
-              mock_test_native_target.expects(:add_dependency).with(mock_app_host_target)
 
               @generator.send(:set_target_dependencies)
             end

@@ -16,7 +16,7 @@ module Pod
 
     # The default version of Swift to use when linting pods
     #
-    DEFAULT_SWIFT_VERSION = '3.2'.freeze
+    DEFAULT_SWIFT_VERSION = '3.0'.freeze
 
     # @return [Specification::Linter] the linter instance from CocoaPods
     #         Core.
@@ -256,9 +256,9 @@ module Pod
     # @return [String] the SWIFT_VERSION to use for validation.
     #
     def swift_version
-      return @swift_version unless @swift_version.nil?
-      if (version = spec.swift_version) || (version = dot_swift_version)
-        @swift_version = version.to_s
+      return @swift_version if defined?(@swift_version)
+      if version = dot_swift_version
+        @swift_version = version
       else
         DEFAULT_SWIFT_VERSION
       end
@@ -277,10 +277,11 @@ module Pod
       swift_version_path.read.strip
     end
 
-    # @return [Boolean] Whether any of the pod targets part of this validator use Swift or not.
+    # @return [String] A string representing the Swift version used during linting
+    #                  or nil, if Swift was not used.
     #
-    def uses_swift?
-      @installer.pod_targets.any?(&:uses_swift?)
+    def used_swift_version
+      swift_version if @installer.pod_targets.any?(&:uses_swift?)
     end
 
     #-------------------------------------------------------------------------#
@@ -307,7 +308,6 @@ module Pod
       validate_screenshots(spec)
       validate_social_media_url(spec)
       validate_documentation_url(spec)
-      validate_source_url(spec)
 
       valid = spec.available_platforms.send(fail_fast ? :all? : :each) do |platform|
         UI.message "\n\n#{spec} - Analyzing on #{platform} platform.".green.reversed
@@ -318,7 +318,7 @@ module Pod
           download_pod
           check_file_patterns
           install_pod
-          validate_swift_version
+          validate_dot_swift_version
           add_app_project_import
           validate_vendored_dynamic_frameworks
           build_pod
@@ -394,50 +394,14 @@ module Pod
       validate_url(spec.documentation_url) if spec.documentation_url
     end
 
-    # Performs validations related to the `source` -> `http` attribute (if exists)
-    #
-    def validate_source_url(spec)
-      return if spec.source.nil? || spec.source[:http].nil?
-      url = spec.source[:http]
-      return if url.downcase.start_with?('https://')
-      warning('http', "The URL (`#{url}`) doesn't use the encrypted HTTPs protocol. " \
-              'It is crucial for Pods to be transferred over a secure protocol to protect your users from man-in-the-middle attacks. '\
-              'This will be an error in future releases. Please update the URL to use https.')
-    end
-
-    # Performs validation for which version of Swift is used during validation.
-    #
-    # An error will be displayed if the user has provided a `swift_version` attribute within the podspec but is also
-    # using either  `--swift-version` parameter or a `.swift-version with a different Swift version.
-    #
-    # The user will be warned that the default version of Swift was used if the following things are true:
-    #   - The project uses Swift at all
-    #   - The user did not supply a Swift version via a parameter
-    #   - There is no `swift_version` attribute set within the specification
-    #   - There is no `.swift-version` file present either.
-    #
-    def validate_swift_version
-      return unless uses_swift?
-      spec_swift_version = spec.swift_version
-      unless spec_swift_version.nil?
-        message = nil
-        if !dot_swift_version.nil? && dot_swift_version != spec_swift_version.to_s
-          message = "Specification `#{spec.name}` specifies an inconsistent `swift_version` (`#{spec_swift_version}`) compared to the one present in your `.swift-version` file (`#{dot_swift_version}`). " \
-                    'Please remove the `.swift-version` file which is now deprecated and only use the `swift_version` attribute within your podspec.'
-        elsif !@swift_version.nil? && @swift_version != spec_swift_version.to_s
-          message = "Specification `#{spec.name}` specifies an inconsistent `swift_version` (`#{spec_swift_version}`) compared to the one passed during lint (`#{@swift_version}`)."
-        end
-        unless message.nil?
-          error('swift', message)
-          return
-        end
-      end
-      if @swift_version.nil? && spec_swift_version.nil? && dot_swift_version.nil?
-        warning('swift',
-                'The validator used ' \
-                "Swift #{DEFAULT_SWIFT_VERSION} by default because no Swift version was specified. " \
-                'To specify a Swift version during validation, add the `swift_version` attribute in your podspec. ' \
-                'Note that usage of the `--swift-version` parameter or a `.swift-version` file is now deprecated.')
+    def validate_dot_swift_version
+      if !used_swift_version.nil? && @swift_version.nil?
+        warning(:swift_version,
+                'The validator for Swift projects uses ' \
+                'Swift 3.0 by default, if you are using a different version of ' \
+                'swift you can use a `.swift-version` file to set the version for ' \
+                "your Pod. For example to use Swift 2.3, run: \n" \
+                '    `echo "2.3" > .swift-version`')
       end
     end
 
@@ -475,22 +439,69 @@ module Pod
 
     def create_app_project
       app_project = Xcodeproj::Project.new(validation_dir + 'App.xcodeproj')
-      Pod::Generator::AppTargetHelper.add_app_target(app_project, consumer.platform_name, deployment_target)
+      app_project.new_target(:application, 'App', consumer.platform_name, deployment_target)
       app_project.save
       app_project.recreate_user_schemes
     end
 
     def add_app_project_import
       app_project = Xcodeproj::Project.open(validation_dir + 'App.xcodeproj')
-      app_target = app_project.targets.first
       pod_target = @installer.pod_targets.find { |pt| pt.pod_name == spec.root.name }
-      Pod::Generator::AppTargetHelper.add_app_project_import(app_project, app_target, pod_target, consumer.platform_name, use_frameworks)
-      Pod::Generator::AppTargetHelper.add_swift_version(app_target, swift_version)
-      Pod::Generator::AppTargetHelper.add_xctest_search_paths(app_target) if @installer.pod_targets.any? { |pt| pt.spec_consumers.any? { |c| c.frameworks.include?('XCTest') } }
+
+      source_file = write_app_import_source_file(pod_target)
+      source_file_ref = app_project.new_group('App', 'App').new_file(source_file)
+      app_target = app_project.targets.first
+      app_target.add_file_references([source_file_ref])
+      add_swift_version(app_target)
+      add_xctest(app_target) if @installer.pod_targets.any? { |pt| pt.spec_consumers.any? { |c| c.frameworks.include?('XCTest') } }
       app_project.save
       Xcodeproj::XCScheme.share_scheme(app_project.path, 'App')
       # Share the pods xcscheme only if it exists. For pre-built vendored pods there is no xcscheme generated.
       Xcodeproj::XCScheme.share_scheme(@installer.pods_project.path, pod_target.label) if shares_pod_target_xcscheme?(pod_target)
+    end
+
+    def add_swift_version(app_target)
+      app_target.build_configurations.each do |configuration|
+        configuration.build_settings['SWIFT_VERSION'] = swift_version
+      end
+    end
+
+    def add_xctest(app_target)
+      app_target.build_configurations.each do |configuration|
+        search_paths = configuration.build_settings['FRAMEWORK_SEARCH_PATHS'] ||= '$(inherited)'
+        search_paths << ' "$(PLATFORM_DIR)/Developer/Library/Frameworks"'
+      end
+    end
+
+    def write_app_import_source_file(pod_target)
+      language = pod_target.uses_swift? ? :swift : :objc
+
+      if language == :swift
+        source_file = validation_dir.+('App/main.swift')
+        source_file.parent.mkpath
+        import_statement = use_frameworks && pod_target.should_build? ? "import #{pod_target.product_module_name}\n" : ''
+        source_file.open('w') { |f| f << import_statement }
+      else
+        source_file = validation_dir.+('App/main.m')
+        source_file.parent.mkpath
+        import_statement = if use_frameworks && pod_target.should_build?
+                             "@import #{pod_target.product_module_name};\n"
+                           else
+                             header_name = "#{pod_target.product_module_name}/#{pod_target.product_module_name}.h"
+                             if pod_target.sandbox.public_headers.root.+(header_name).file?
+                               "#import <#{header_name}>\n"
+                             else
+                               ''
+                             end
+        end
+        source_file.open('w') do |f|
+          f << "@import Foundation;\n"
+          f << "@import UIKit;\n" if consumer.platform_name == :ios || consumer.platform_name == :tvos
+          f << "@import Cocoa;\n" if consumer.platform_name == :osx
+          f << "#{import_statement}int main() {}\n"
+        end
+      end
+      source_file
     end
 
     # It creates a podfile in memory and builds a library containing the pod
@@ -501,24 +512,12 @@ module Pod
          perform_post_install_actions).each { |m| @installer.send(m) }
 
       deployment_target = spec.subspec_by_name(subspec_name).deployment_target(consumer.platform_name)
-      configure_pod_targets(@installer.aggregate_targets, deployment_target)
-      @installer.pods_project.save
-    end
-
-    def configure_pod_targets(targets, deployment_target)
-      targets.each do |target|
+      @installer.aggregate_targets.each do |target|
         target.pod_targets.each do |pod_target|
           next unless (native_target = pod_target.native_target)
           native_target.build_configuration_list.build_configurations.each do |build_configuration|
             (build_configuration.build_settings['OTHER_CFLAGS'] ||= '$(inherited)') << ' -Wincomplete-umbrella'
-            build_configuration.build_settings['SWIFT_VERSION'] = (pod_target.swift_version || swift_version) if pod_target.uses_swift?
-          end
-          if pod_target.uses_swift?
-            pod_target.test_native_targets.each do |test_native_target|
-              test_native_target.build_configuration_list.build_configurations.each do |build_configuration|
-                build_configuration.build_settings['SWIFT_VERSION'] = swift_version
-              end
-            end
+            build_configuration.build_settings['SWIFT_VERSION'] = swift_version if pod_target.uses_swift?
           end
         end
         if target.pod_targets.any?(&:uses_swift?) && consumer.platform_name == :ios &&
@@ -527,6 +526,7 @@ module Pod
           error('swift', 'Swift support uses dynamic frameworks and is therefore only supported on iOS > 8.') unless uses_xctest
         end
       end
+      @installer.pods_project.save
     end
 
     def validate_vendored_dynamic_frameworks

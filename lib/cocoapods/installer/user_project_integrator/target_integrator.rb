@@ -147,66 +147,6 @@ module Pod
                 end
               end
           end
-
-          # Updates all target script phases for the current target, including creating or updating, deleting
-          # and re-ordering.
-          #
-          # @return [void]
-          #
-          def create_or_update_user_script_phases(script_phases, native_target)
-            script_phase_names = script_phases.map { |k| k[:name] }
-            # Delete script phases no longer present in the target definition.
-            native_target_script_phases = native_target.shell_script_build_phases.select { |bp| !bp.name.nil? && bp.name.start_with?(USER_BUILD_PHASE_PREFIX) }
-            native_target_script_phases.each do |script_phase|
-              script_phase_name_without_prefix = script_phase.name.sub(USER_BUILD_PHASE_PREFIX, '')
-              unless script_phase_names.include?(script_phase_name_without_prefix)
-                native_target.build_phases.delete(script_phase)
-              end
-            end
-            # Create or update the ones that are expected to be.
-            script_phases.each do |td_script_phase|
-              name_with_prefix = USER_BUILD_PHASE_PREFIX + td_script_phase[:name]
-              phase = TargetIntegrator.create_or_update_build_phase(native_target, name_with_prefix)
-              phase.shell_script = td_script_phase[:script]
-              phase.shell_path = td_script_phase[:shell_path] if td_script_phase.key?(:shell_path)
-              phase.input_paths = td_script_phase[:input_files] if td_script_phase.key?(:input_files)
-              phase.output_paths = td_script_phase[:output_files] if td_script_phase.key?(:output_files)
-              phase.show_env_vars_in_log = td_script_phase[:show_env_vars_in_log] ? '1' : '0' if td_script_phase.key?(:show_env_vars_in_log)
-
-              execution_position = td_script_phase[:execution_position]
-              unless execution_position == :any
-                compile_build_phase_index = native_target.build_phases.index do |bp|
-                  bp.is_a?(Xcodeproj::Project::Object::PBXSourcesBuildPhase)
-                end
-                unless compile_build_phase_index.nil?
-                  script_phase_index = native_target.build_phases.index do |bp|
-                    bp.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) && !bp.name.nil? && bp.name == name_with_prefix
-                  end
-                  if (execution_position == :before_compile && script_phase_index > compile_build_phase_index) ||
-                    (execution_position == :after_compile && script_phase_index < compile_build_phase_index)
-                    native_target.build_phases.move_from(script_phase_index, compile_build_phase_index)
-                  end
-                end
-              end
-            end
-          end
-
-          # Returns an extension in the target that corresponds to the
-          # resource's input extension.
-          #
-          # @return [String] The output extension.
-          #
-          def output_extension_for_resource(input_extension)
-            case input_extension
-            when '.storyboard'        then '.storyboardc'
-            when '.xib'               then '.nib'
-            when '.framework'         then '.framework'
-            when '.xcdatamodel'       then '.mom'
-            when '.xcdatamodeld'      then '.momd'
-            when '.xcmappingmodel'    then '.cdm'
-            else                      input_extension
-            end
-          end
         end
 
         # Integrates the user project targets. Only the targets that do **not**
@@ -224,7 +164,7 @@ module Pod
             remove_embed_frameworks_script_phase_from_embedded_targets
             add_copy_resources_script_phase
             add_check_manifest_lock_script_phase
-            add_user_script_phases
+            update_target_script_phases
           end
         end
 
@@ -280,14 +220,8 @@ module Pod
             input_paths = []
             output_paths = []
             unless resource_paths_by_config.values.all?(&:empty?)
-              resource_paths_flattened = resource_paths_by_config.values.flatten.uniq
-              input_paths = [target.copy_resources_script_relative_path, *resource_paths_flattened]
-              # convert input paths to output paths according to extensions
-              output_paths = resource_paths_flattened.map do |input_path|
-                base_path = '${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}'
-                output_extension = TargetIntegrator.output_extension_for_resource(File.extname(input_path))
-                File.join(base_path, File.basename(input_path, File.extname(input_path)) + output_extension)
-              end.uniq
+              input_paths = [target.copy_resources_script_relative_path, *resource_paths_by_config.values.flatten.uniq]
+              output_paths = ['${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}']
             end
             TargetIntegrator.add_copy_resources_script_phase_to_target(native_target, script_path, input_paths, output_paths)
           end
@@ -320,7 +254,7 @@ module Pod
             output_paths = []
             unless framework_paths_by_config.all?(&:empty?)
               input_paths = [target.embed_frameworks_script_relative_path, *framework_paths_by_config.map { |fw| [fw[:input_path], fw[:dsym_input_path]] }.flatten.compact]
-              output_paths = framework_paths_by_config.map { |fw| [fw[:output_path], fw[:dsym_output_path]] }.flatten.compact.uniq
+              output_paths = framework_paths_by_config.map { |fw| [fw[:output_path], fw[:dsym_output_path]] }.flatten.compact
             end
             TargetIntegrator.add_embed_frameworks_script_phase_to_target(native_target, script_path, input_paths, output_paths)
           end
@@ -331,9 +265,38 @@ module Pod
         #
         # @return [void]
         #
-        def add_user_script_phases
+        def update_target_script_phases
+          target_definition_script_phases = target.target_definition.script_phases
+          target_definition_script_phase_names = target_definition_script_phases.map { |k| k[:name] }
           native_targets.each do |native_target|
-            TargetIntegrator.create_or_update_user_script_phases(target.target_definition.script_phases, native_target)
+            # Delete script phases no longer present in the target definition.
+            native_target_script_phases = native_target.shell_script_build_phases.select { |bp| !bp.name.nil? && bp.name.start_with?(USER_BUILD_PHASE_PREFIX) }
+            native_target_script_phases.each do |script_phase|
+              script_phase_name_without_prefix = script_phase.name.sub(USER_BUILD_PHASE_PREFIX, '')
+              unless target_definition_script_phase_names.include?(script_phase_name_without_prefix)
+                native_target.build_phases.delete(script_phase)
+              end
+            end
+
+            # Create or update the ones that are expected to be.
+            target_definition_script_phases.each do |td_script_phase|
+              phase = TargetIntegrator.create_or_update_build_phase(native_target, USER_BUILD_PHASE_PREFIX + td_script_phase[:name])
+              phase.shell_script = td_script_phase[:script]
+              phase.shell_path = td_script_phase[:shell_path] if td_script_phase.key?(:shell_path)
+              phase.input_paths = td_script_phase[:input_files] if td_script_phase.key?(:input_files)
+              phase.output_paths = td_script_phase[:output_files] if td_script_phase.key?(:output_files)
+              phase.show_env_vars_in_log = td_script_phase[:show_env_vars_in_log] ? '1' : '0' if td_script_phase.key?(:show_env_vars_in_log)
+            end
+
+            # Move script phases to their correct index if the order has changed.
+            offset = native_target.build_phases.count - target_definition_script_phases.count
+            target_definition_script_phases.each_with_index do |td_script_phase, index|
+              current_index = native_target.build_phases.index do |bp|
+                bp.is_a?(Xcodeproj::Project::Object::PBXShellScriptBuildPhase) && bp.name.sub(USER_BUILD_PHASE_PREFIX, '') == td_script_phase[:name]
+              end
+              expected_index = offset + index
+              native_target.build_phases.insert(expected_index, native_target.build_phases.delete_at(current_index)) if current_index != expected_index
+            end
           end
         end
 

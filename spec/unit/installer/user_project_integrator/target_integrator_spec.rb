@@ -301,64 +301,19 @@ module Pod
 
         it 'adds copy pods resources input and output paths' do
           resource_paths_by_config = {
-            'Debug' => [
-              '${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugDataModel.xcdatamodeld',
-              '${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugDataModel.xcdatamodel',
-              '${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugMappingModel.xcmappingmodel',
-              '${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugLib.bundle',
-            ],
-            'Release' => [
-              '${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLib.bundle',
-              '${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLib.storyboard',
-              '${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLibXIB.xib',
-            ],
+            'Debug' => ['${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugLib.bundle'],
+            'Release' => ['${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLib.bundle'],
           }
           @pod_bundle.stubs(:resource_paths_by_config => resource_paths_by_config)
           @target_integrator.integrate!
           target = @target_integrator.send(:native_targets).first
           phase = target.shell_script_build_phases.find { |bp| bp.name == @copy_pods_resources_phase_name }
           phase.input_paths.sort.should == %w(
-            ${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugDataModel.xcdatamodel
-            ${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugDataModel.xcdatamodeld
             ${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugLib.bundle
-            ${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/DebugMappingModel.xcmappingmodel
             ${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLib.bundle
-            ${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLib.storyboard
-            ${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/ReleaseLibXIB.xib
             ${SRCROOT}/../Pods/Target\ Support\ Files/Pods/Pods-resources.sh
           )
-          phase.output_paths.sort.should == %w(
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/DebugDataModel.mom
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/DebugDataModel.momd
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/DebugLib.bundle
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/DebugMappingModel.cdm
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ReleaseLib.bundle
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ReleaseLib.storyboardc
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/ReleaseLibXIB.nib
-          )
-        end
-
-        it 'adds copy pods resources input and output paths without duplicates' do
-          resource_paths_by_config = {
-            'Debug' => [
-              '${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/SomeBundle.bundle',
-            ],
-            'Release' => [
-              '${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/SomeBundle.bundle',
-            ],
-          }
-          @pod_bundle.stubs(:resource_paths_by_config => resource_paths_by_config)
-          @target_integrator.integrate!
-          target = @target_integrator.send(:native_targets).first
-          phase = target.shell_script_build_phases.find { |bp| bp.name == @copy_pods_resources_phase_name }
-          phase.input_paths.sort.should == %w(
-            ${PODS_CONFIGURATION_BUILD_DIR}/DebugLib/SomeBundle.bundle
-            ${PODS_CONFIGURATION_BUILD_DIR}/ReleaseLib/SomeBundle.bundle
-            ${SRCROOT}/../Pods/Target\ Support\ Files/Pods/Pods-resources.sh
-          )
-          phase.output_paths.sort.should == %w(
-            ${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/SomeBundle.bundle
-          )
+          phase.output_paths.sort.should == %w(${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH})
         end
 
         it 'does not add embed frameworks build phase input output paths with no frameworks' do
@@ -414,53 +369,6 @@ module Pod
           )
         end
 
-        it 'adds embed frameworks build phase input and output paths for vendored and non vendored frameworks without duplicate' do
-          debug_vendored_framework = { :name => 'SomeFramework.framework',
-                                       :input_path => '${PODS_ROOT}/DebugVendoredFramework/ios/SomeFramework.framework',
-                                       :output_path => '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/SomeFramework.framework',
-                                       :dsym_name => 'SomeFramework.framework.dSYM',
-                                       :dsym_input_path => '${PODS_ROOT}/DebugVendoredFramework/ios/SomeFramework.framework.dSYM',
-                                       :dsym_output_path => '${DWARF_DSYM_FOLDER_PATH}/SomeFramework.framework.dSYM' }
-
-          debug_non_vendored_framework = { :name => 'CompiledFramework.framework',
-                                           :input_path => '${BUILT_PRODUCTS_DIR}/DebugCompiledFramework/CompiledFramework.framework',
-                                           :output_path => '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/CompiledFramework.framework' }
-
-          release_vendored_framework = { :name => 'ReleaseVendoredFramework.framework',
-                                         :input_path => '${PODS_ROOT}/ReleaseVendoredFramework/ios/SomeFramework.framework',
-                                         :output_path => '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/SomeFramework.framework',
-                                         :dsym_name => 'SomeFramework.framework.dSYM',
-                                         :dsym_input_path => '${PODS_ROOT}/ReleaseVendoredFramework/ios/SomeFramework.framework.dSYM',
-                                         :dsym_output_path => '${DWARF_DSYM_FOLDER_PATH}/SomeFramework.framework.dSYM' }
-
-          release_non_vendored_framework = { :name => 'CompiledFramework.framework',
-                                             :input_path => '${BUILT_PRODUCTS_DIR}/ReleaseCompiledFramework/CompiledFramework.framework',
-                                             :output_path => '${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/CompiledFramework.framework' }
-
-          framework_paths_by_config = {
-            'Debug' => [debug_vendored_framework, debug_non_vendored_framework],
-            'Release' => [release_vendored_framework, release_non_vendored_framework],
-          }
-          @pod_bundle.stubs(:framework_paths_by_config => framework_paths_by_config)
-          @target_integrator.integrate!
-          target = @target_integrator.send(:native_targets).first
-          phase = target.shell_script_build_phases.find { |bp| bp.name == @embed_framework_phase_name }
-          phase.input_paths.sort.should == %w(
-            ${BUILT_PRODUCTS_DIR}/DebugCompiledFramework/CompiledFramework.framework
-            ${BUILT_PRODUCTS_DIR}/ReleaseCompiledFramework/CompiledFramework.framework
-            ${PODS_ROOT}/DebugVendoredFramework/ios/SomeFramework.framework
-            ${PODS_ROOT}/DebugVendoredFramework/ios/SomeFramework.framework.dSYM
-            ${PODS_ROOT}/ReleaseVendoredFramework/ios/SomeFramework.framework
-            ${PODS_ROOT}/ReleaseVendoredFramework/ios/SomeFramework.framework.dSYM
-            ${SRCROOT}/../Pods/Target\ Support\ Files/Pods/Pods-frameworks.sh
-          )
-          phase.output_paths.sort.should == %w(
-            ${DWARF_DSYM_FOLDER_PATH}/SomeFramework.framework.dSYM
-            ${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/CompiledFramework.framework
-            ${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}/SomeFramework.framework
-          )
-        end
-
         it 'adds a custom shell script phase' do
           @pod_bundle.target_definition.stubs(:script_phases).returns([:name => 'Custom Script', :script => 'echo "Hello World"'])
           @target_integrator.integrate!
@@ -480,50 +388,32 @@ module Pod
           target.shell_script_build_phases.find { |bp| bp.name == @user_script_phase_name }.should.be.nil
         end
 
-        it 'moves custom shell scripts according to their execution position' do
-          shell_script_one = { :name => 'Custom Script', :script => 'echo "Hello World"', :execution_position => :before_compile }
-          shell_script_two = { :name => 'Custom Script 2', :script => 'echo "Hello Aliens"' }
-          @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_one, shell_script_two])
-          @target_integrator.integrate!
-          target = @target_integrator.send(:native_targets).first
-          target.build_phases.map(&:display_name).should == [
-            '[CP] Check Pods Manifest.lock',
-            '[CP-User] Custom Script',
-            'Sources',
-            'Frameworks',
-            'Resources',
-            '[CP] Embed Pods Frameworks',
-            '[CP] Copy Pods Resources',
-            '[CP-User] Custom Script 2',
-          ]
-          shell_script_one = { :name => 'Custom Script', :script => 'echo "Hello World"', :execution_position => :after_compile }
-          shell_script_two = { :name => 'Custom Script 2', :script => 'echo "Hello Aliens"', :execution_position => :before_compile }
-          @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_one, shell_script_two])
-          @target_integrator.integrate!
-          target.build_phases.map(&:display_name).should == [
-            '[CP] Check Pods Manifest.lock',
-            '[CP-User] Custom Script 2',
-            'Sources',
-            '[CP-User] Custom Script',
-            'Frameworks',
-            'Resources',
-            '[CP] Embed Pods Frameworks',
-            '[CP] Copy Pods Resources',
-          ]
+        it 'moves custom shell scripts to their correct index' do
           shell_script_one = { :name => 'Custom Script', :script => 'echo "Hello World"' }
           shell_script_two = { :name => 'Custom Script 2', :script => 'echo "Hello Aliens"' }
           @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_one, shell_script_two])
           @target_integrator.integrate!
-          target.build_phases.map(&:display_name).should == [
+          target = @target_integrator.send(:native_targets).first
+          target.shell_script_build_phases.map(&:name).should == [
             '[CP] Check Pods Manifest.lock',
-            '[CP-User] Custom Script 2',
-            'Sources',
-            '[CP-User] Custom Script',
-            'Frameworks',
-            'Resources',
             '[CP] Embed Pods Frameworks',
             '[CP] Copy Pods Resources',
+            '[CP-User] Custom Script',
+            '[CP-User] Custom Script 2',
           ]
+          shell_script_one_uuid = target.shell_script_build_phases[3].uuid
+          shell_script_two_uuid = target.shell_script_build_phases[4].uuid
+          @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_two, shell_script_one])
+          @target_integrator.integrate!
+          target.shell_script_build_phases.map(&:name).should == [
+            '[CP] Check Pods Manifest.lock',
+            '[CP] Embed Pods Frameworks',
+            '[CP] Copy Pods Resources',
+            '[CP-User] Custom Script 2',
+            '[CP-User] Custom Script',
+          ]
+          target.shell_script_build_phases[3].uuid.should == shell_script_two_uuid
+          target.shell_script_build_phases[4].uuid.should == shell_script_one_uuid
         end
 
         it 'adds, removes and moves custom shell script phases' do
@@ -534,11 +424,8 @@ module Pod
           @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_one, shell_script_two, shell_script_three])
           @target_integrator.integrate!
           target = @target_integrator.send(:native_targets).first
-          target.build_phases.map(&:display_name).should == [
+          target.shell_script_build_phases.map(&:name).should == [
             '[CP] Check Pods Manifest.lock',
-            'Sources',
-            'Frameworks',
-            'Resources',
             '[CP] Embed Pods Frameworks',
             '[CP] Copy Pods Resources',
             '[CP-User] Custom Script',
@@ -547,11 +434,8 @@ module Pod
           ]
           @pod_bundle.target_definition.stubs(:script_phases).returns([shell_script_two, shell_script_four])
           @target_integrator.integrate!
-          target.build_phases.map(&:display_name).should == [
+          target.shell_script_build_phases.map(&:name).should == [
             '[CP] Check Pods Manifest.lock',
-            'Sources',
-            'Frameworks',
-            'Resources',
             '[CP] Embed Pods Frameworks',
             '[CP] Copy Pods Resources',
             '[CP-User] Custom Script 2',
@@ -565,11 +449,8 @@ module Pod
           target.new_shell_script_build_phase('User Script Phase 1')
           target.new_shell_script_build_phase('User Script Phase 2')
           @target_integrator.integrate!
-          target.build_phases.map(&:display_name).should == [
+          target.shell_script_build_phases.map(&:name).should == [
             '[CP] Check Pods Manifest.lock',
-            'Sources',
-            'Frameworks',
-            'Resources',
             'User Script Phase 1',
             'User Script Phase 2',
             '[CP] Embed Pods Frameworks',
@@ -578,11 +459,8 @@ module Pod
           ]
           @pod_bundle.target_definition.stubs(:script_phases).returns([])
           @target_integrator.integrate!
-          target.build_phases.map(&:display_name).should == [
+          target.shell_script_build_phases.map(&:name).should == [
             '[CP] Check Pods Manifest.lock',
-            'Sources',
-            'Frameworks',
-            'Resources',
             'User Script Phase 1',
             'User Script Phase 2',
             '[CP] Embed Pods Frameworks',

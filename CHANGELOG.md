@@ -8,189 +8,16 @@ To install release candidates run `[sudo] gem install cocoapods --pre`
 
 ##### Enhancements
 
-* Show warning when Pod source uses unencrypted HTTP  
-  [KrauseFx](https://github.com/KrauseFx)
-  [#7293](https://github.com/CocoaPods/CocoaPods/issues/7293)
-
-##### Bug Fixes
-
-* Restore `development_pod_targets` public method in installer  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7292](https://github.com/CocoaPods/CocoaPods/pull/7292)
-
-## 1.4.0.rc.1 (2017-12-16)
-
-##### Enhancements
-
-* Integrate `swift_version` DSL support into pod targets  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7134](https://github.com/CocoaPods/CocoaPods/issues/7134)
-
-* Add color indication to output of `pod outdated`  
-  [iv-mexx](https://github.com/iv-mexx)
-  [#7204](https://github.com/CocoaPods/CocoaPods/pull/7204)
-
-* Set syntax of podspecs from development pods to Ruby when appropriate  
-  [Eric Amorde](https://github.com/amorde)
-  [#7278](https://github.com/CocoaPods/CocoaPods/pull/7278)
-
-* Add support for editing the podspec, license, README, license, and docs of local development pods  
-  [Eric Amorde](https://github.com/amorde)
-  [#7093](https://github.com/CocoaPods/CocoaPods/pull/7093)
-
-* Show warning when SDK provider tries to push a version with an unencrypted HTTP source  
-  [KrauseFx](https://github.com/KrauseFx)
-  [#7250](https://github.com/CocoaPods/CocoaPods/pull/7250)
-
-##### Bug Fixes
-
-* Deduplicate output path file names for resources and frameworks  
-  [Eric Amorde](https://github.com/amorde)
-  [#7259](https://github.com/CocoaPods/CocoaPods/issues/7259)
-
-* Allow installation of a pod with its own Swift version on multiple targets  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7261](https://github.com/CocoaPods/CocoaPods/pull/7261)
-
-* Quote framework names in OTHER_LDFLAGS  
-  [Tyler Stromberg](https://github.com/AquaGeek)
-  [#7185](https://github.com/CocoaPods/CocoaPods/issues/7185)
-
-* Fix static framework archive regression from #7187  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#7225](https://github.com/CocoaPods/CocoaPods/issues/7225)
-
-* Install resource bundles and embed frameworks for every test target's configuration  
-  [Nickolay Tarbayev](https://github.com/tarbayev)
-  [#7012](https://github.com/CocoaPods/CocoaPods/issues/7012)
-
-* Set `SWIFT_VERSION` to test native targets during validation  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7216](https://github.com/CocoaPods/CocoaPods/pull/7216)
-
-* Add copied resources' paths to "Copy Pods Resources" output file list  
-  [igor-makarov](https://github.com/igor-makarov)
-  [#6936](https://github.com/CocoaPods/CocoaPods/issues/6936)
-
-* Do not link system frameworks of test specs to library targets  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7205](https://github.com/CocoaPods/CocoaPods/pull/7205)
-
-* Be more lenient when stripping frameworks and dSYMs for non fat binaries  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7196](https://github.com/CocoaPods/CocoaPods/issues/7196)
-  [#5854](https://github.com/CocoaPods/CocoaPods/issues/5854)
-
-* Do not display script phases warnings multiple times per platform  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7193](https://github.com/CocoaPods/CocoaPods/pull/7193)
-
-* Fix unnecessary whole project recompilation with static frameworks  
-  [Vladimir Gorbenko](https://github.com/volodg)
-  [#7187](https://github.com/CocoaPods/CocoaPods/issues/7187)
-
-* Prevent passing empty string to git when running `pod repo update --silent`  
-  [Jon Sorrells](https://github.com/jonsorrells)
-  [#7176](https://github.com/CocoaPods/CocoaPods/issues/7176)
-
-* Do not propagate test spec frameworks and libraries into pod target xcconfig  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7172](https://github.com/CocoaPods/CocoaPods/issues/7172)
-
-* Set language to Swift for test native targets if any dependencies use Swift  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7170](https://github.com/CocoaPods/CocoaPods/issues/7170)
-  
-* Prevent multiple script phases from stripping vendored dSYM  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7166](https://github.com/CocoaPods/CocoaPods/pull/7166)
-
-* Static library headers should all be `Project` in Xcode header build phase  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#4496](https://github.com/CocoaPods/CocoaPods/issues/4496)
-
-* Fix archiving apps with static frameworks  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#7158](https://github.com/CocoaPods/CocoaPods/issues/7158)
-
-## 1.4.0.beta.2 (2017-10-24)
-
-##### Enhancements
-
-* Integrate execution position for shell script phases  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7101](https://github.com/CocoaPods/CocoaPods/pull/7101)
-
-* Add support to integrate script phases from podspecs  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7092](https://github.com/CocoaPods/CocoaPods/pull/7092)
-
 * Add support for preventing pch file generation with the skip_pch podspec attribute  
   [Paul Beusterien](https://github.com/paulb777)
   [#7044](https://github.com/CocoaPods/CocoaPods/pull/7044)
 
-* Add app host support for test specs  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#6953](https://github.com/CocoaPods/CocoaPods/issues/6953)
-
-* Add support for resources in source static library frameworks  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#7100](https://github.com/CocoaPods/CocoaPods/pull/7100)
-
 ##### Bug Fixes
-
-* Copy .swiftmodule into static_frameworks to enable access to Swift static frameworks  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#7140](https://github.com/CocoaPods/CocoaPods/issues/7140)
-
-* Fix docs for prefix header paths  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7149](https://github.com/CocoaPods/CocoaPods/pull/7149)
-
-* Fix integration `prefix_header_file` with test specs  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7147](https://github.com/CocoaPods/CocoaPods/pull/7147)
-
-* Set the default Swift version to 3.2 during validation  
-  [Victor Hugo Barros](https://github.com/heyzooi)
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7136](https://github.com/CocoaPods/CocoaPods/pull/7136)
-
-* Better warning message for which Swift version was used during validation  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7121](https://github.com/CocoaPods/CocoaPods/issues/7121)
-
-* Fix static_framework Swift pod dependencies and implement pod access to dependent vendored_framework modules  
-  [Paul Beusterien](https://github.com/paulb777)
-  [#7117](https://github.com/CocoaPods/CocoaPods/issues/7117)
-
-* Strip vendored dSYMs during embed script phase  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7111](https://github.com/CocoaPods/CocoaPods/issues/7111)
-
-* Warn when a pod that was added or changed includes script phases  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7110](https://github.com/CocoaPods/CocoaPods/pull/7110)
-
-* Build pod targets with script phases and integrate them properly  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7104](https://github.com/CocoaPods/CocoaPods/pull/7104)
-
-* Do not set a `CODE_SIGN_IDENTITY` for macOS app hosts or xctest bundles  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7103](https://github.com/CocoaPods/CocoaPods/pull/7103)
-
-* Fix framework and resources paths caching  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7068](https://github.com/CocoaPods/CocoaPods/pull/7068)
 
 * Build subspecs in static frameworks without error  
   [Paul Beusterien](https://github.com/paulb777)
   [#7058](https://github.com/CocoaPods/CocoaPods/pull/7058)
 
-* Ensure `SYMROOT` is properly set for all user configurations  
-  [Dimitris Koutsogiorgas](https://github.com/dnkoutso)
-  [#7081](https://github.com/CocoaPods/CocoaPods/issues/7081)
 
 ## 1.4.0.beta.1 (2017-09-24)
 
@@ -273,7 +100,7 @@ To install release candidates run `[sudo] gem install cocoapods --pre`
 
 * Fix validation warnings when using --swift-version  
   [Danielle Tomlinson](https://github.com/dantoml)
-  [#6971](https://github.com/CocoaPods/CocoaPods/pull/6971)
+  [#6971](https://github.com/CocoaPods/CocoaPods/issue/6971)
 
 * Fix xcconfig boolean merging when substrings include yes or no  
   [Paul Beusterien](https://github.com/paulb777)

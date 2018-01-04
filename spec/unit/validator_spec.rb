@@ -139,7 +139,6 @@ module Pod
           @validator.stubs(:validate_screenshots)
           @validator.stubs(:validate_social_media_url)
           @validator.stubs(:validate_documentation_url)
-          @validator.stubs(:validate_source_url)
           @validator.stubs(:perform_extensive_subspec_analysis)
           Specification.any_instance.stubs(:available_platforms).returns([])
 
@@ -260,24 +259,6 @@ module Pod
         end
 
         describe 'documentation URL validation' do
-          before do
-            @validator.unstub(:validate_source_url)
-          end
-
-          it 'checks if the source URL is valid' do
-            Specification.any_instance.stubs(:source).returns(:http => 'https://orta.io/package.zip')
-            @validator.validate
-            @validator.results.should.be.empty?
-          end
-
-          it 'should fail validation if the source URL is not HTTPs encrypted' do
-            Specification.any_instance.stubs(:source).returns(:http => 'http://orta.io/package.zip')
-            @validator.validate
-            @validator.results.map(&:to_s).first.should.match /use the encrypted HTTPs protocol./
-          end
-        end
-
-        describe 'source URL validation' do
           before do
             @validator.unstub(:validate_documentation_url)
           end
@@ -600,6 +581,81 @@ module Pod
           Xcodeproj::Project.schemes(project.path).should == %w(App)
         end
 
+        describe 'creating the importing file' do
+          describe 'when linting as a framework' do
+            before do
+              @validator.stubs(:use_frameworks).returns(true)
+            end
+
+            it 'creates a swift import' do
+              pod_target = stub(:uses_swift? => true, :should_build? => true, :product_module_name => 'ModuleName')
+
+              file = @validator.send(:write_app_import_source_file, pod_target)
+              file.basename.to_s.should == 'main.swift'
+              file.read.should == <<-SWIFT.strip_heredoc
+                import ModuleName
+              SWIFT
+            end
+
+            it 'creates an objective-c import' do
+              pod_target = stub(:uses_swift? => false, :should_build? => true, :product_module_name => 'ModuleName')
+
+              file = @validator.send(:write_app_import_source_file, pod_target)
+              file.basename.to_s.should == 'main.m'
+              file.read.should == <<-OBJC.strip_heredoc
+                @import Foundation;
+                @import UIKit;
+                @import ModuleName;
+                int main() {}
+              OBJC
+            end
+
+            it 'creates no import when the pod target has no source files' do
+              pod_target = stub(:uses_swift? => true, :should_build? => false)
+
+              file = @validator.send(:write_app_import_source_file, pod_target)
+              file.basename.to_s.should == 'main.swift'
+              file.read.should == ''
+            end
+          end
+
+          describe 'when linting as a static lib' do
+            before do
+              @validator.stubs(:use_frameworks).returns(false)
+              @sandbox = config.sandbox
+            end
+
+            it 'creates an objective-c import when a plausible umbrella header is found' do
+              pod_target = stub(:uses_swift? => false, :should_build? => true, :product_module_name => 'ModuleName', :sandbox => @sandbox)
+              header_name = "#{pod_target.product_module_name}/#{pod_target.product_module_name}.h"
+              umbrella = pod_target.sandbox.public_headers.root.+(header_name)
+              umbrella.dirname.mkpath
+              umbrella.open('w') {}
+
+              file = @validator.send(:write_app_import_source_file, pod_target)
+              file.basename.to_s.should == 'main.m'
+              file.read.should == <<-OBJC.strip_heredoc
+                @import Foundation;
+                @import UIKit;
+                #import <ModuleName/ModuleName.h>
+                int main() {}
+              OBJC
+            end
+
+            it 'does not create an objective-c import when no umbrella header is found' do
+              pod_target = stub(:uses_swift? => false, :should_build? => true, :product_module_name => 'ModuleName', :sandbox => @sandbox)
+
+              file = @validator.send(:write_app_import_source_file, pod_target)
+              file.basename.to_s.should == 'main.m'
+              file.read.should == <<-OBJC.strip_heredoc
+                @import Foundation;
+                @import UIKit;
+                int main() {}
+              OBJC
+            end
+          end
+        end
+
         it 'adds the importing file to the app target' do
           @validator.stubs(:use_frameworks).returns(true)
           @validator.send(:create_app_project)
@@ -904,92 +960,22 @@ module Pod
 
           result = validator.results.first
           result.type.should == :warning
-          result.message.should == 'The validator used ' \
-            'Swift 3.2 by default because no Swift version was specified. ' \
-            'To specify a Swift version during validation, add the `swift_version` attribute in your podspec. ' \
-            'Note that usage of the `--swift-version` parameter or a `.swift-version` file is now deprecated.'
-        end
-
-        it 'errors when swift version spec attribute does not match dot swift version' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-          Specification.any_instance.stubs(:swift_version).returns(Version.new('4.0'))
-
-          validator = test_swiftpod_with_dot_swift_version('3.2')
-          validator.validate
-          validator.results.count.should == 1
-
-          result = validator.results.first
-          result.type.should == :error
-          result.message.should == 'Specification `JSONKit` specifies an inconsistent `swift_version` (`4.0`) compared to the one present in your `.swift-version` file (`3.2`). ' \
-                                   'Please remove the `.swift-version` file which is now deprecated and only use the `swift_version` attribute within your podspec.'
-        end
-
-        it 'does not error when swift version spec attribute matches dot swift version' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-          Specification.any_instance.stubs(:swift_version).returns(Version.new('4.0'))
-
-          validator = test_swiftpod_with_dot_swift_version('4.0')
-          validator.validate
-          validator.results.count.should == 0
-        end
-
-        it 'errors when swift version spec attribute does not match parameter based swift version' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-          Specification.any_instance.stubs(:swift_version).returns(Version.new('4.0'))
-
-          validator = test_swiftpod
-          validator.swift_version = '3.2'
-          validator.validate
-          validator.results.count.should == 1
-
-          result = validator.results.first
-          result.type.should == :error
-          result.message.should == 'Specification `JSONKit` specifies an inconsistent `swift_version` (`4.0`) compared to the one passed during lint (`3.2`).'
-        end
-
-        it 'does not error when swift version spec attribute matches parameter based swift version' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-          Specification.any_instance.stubs(:swift_version).returns(Version.new('4.0'))
-
-          validator = test_swiftpod
-          validator.swift_version = '4.0'
-          validator.validate
-          validator.results.count.should == 0
-        end
-
-        it 'does not warn for Swift if version was set by a dot swift version file' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-
-          validator = test_swiftpod_with_dot_swift_version
-          validator.validate
-          validator.results.count.should == 0
-        end
-
-        it 'does not warn for Swift if version was set as a parameter' do
-          Specification.any_instance.stubs(:deployment_target).returns('9.0')
-
-          validator = test_swiftpod
-          validator.stubs(:dot_swift_version).returns(nil)
-          validator.swift_version = '3.1.0'
-          validator.validate
-          validator.results.count.should == 0
+          result.message.should == 'The validator for ' \
+            'Swift projects uses Swift 3.0 by default, if you are using a ' \
+            'different version of swift you can use a `.swift-version` file ' \
+            'to set the version for your Pod. For example to use Swift 2.3, ' \
+            "run: \n    `echo \"2.3\" > .swift-version`"
         end
       end
 
       describe '#swift_version' do
-        it 'defaults to Swift 3.2' do
+        it 'defaults to Swift 3.0' do
           validator = test_swiftpod
           validator.stubs(:dot_swift_version).returns(nil)
-          validator.swift_version.should == '3.2'
+          validator.swift_version.should == '3.0'
         end
 
-        it 'uses the Swift version specified by the swift_version attribute in the spec' do
-          validator = test_swiftpod
-          validator.spec.swift_version = '4.0'
-          validator.swift_version.should == '4.0'
-        end
-
-        it 'allows the user to set the Swift version using a .swift-version file' do
+        it 'allows the user to set the version' do
           validator = test_swiftpod
           validator.stubs(:dot_swift_version).returns('3.0')
           validator.swift_version = '4.0'
@@ -1039,7 +1025,7 @@ module Pod
           validator.instance_variable_set(:@installer, installer)
 
           validator.stubs(:dot_swift_version).returns('1.2.3')
-          validator.uses_swift?.should.be.true
+          validator.used_swift_version.should == '1.2.3'
         end
 
         it 'returns the swift_version when a target has used Swift' do
@@ -1048,23 +1034,7 @@ module Pod
           installer = stub(:pod_targets => [pod_target])
           validator.instance_variable_set(:@installer, installer)
 
-          validator.uses_swift?.should.be.false
-        end
-
-        it 'honors swift version set by the pod target for dependencies' do
-          validator = test_swiftpod
-          consumer = stub(:platform_name => 'iOS')
-          validator.instance_variable_set(:@consumer, consumer)
-          debug_configuration_one = stub(:build_settings => {})
-          debug_configuration_two = stub(:build_settings => {})
-          native_target_one = stub(:build_configuration_list => stub(:build_configurations => [debug_configuration_one]))
-          native_target_two = stub(:build_configuration_list => stub(:build_configurations => [debug_configuration_two]))
-          pod_target_one = stub(:uses_swift? => true, :swift_version => '4.0', :native_target => native_target_one, :test_native_targets => [])
-          pod_target_two = stub(:uses_swift? => true, :swift_version => '3.2', :native_target => native_target_two, :test_native_targets => [])
-          aggregate_target = stub(:pod_targets => [pod_target_one, pod_target_two])
-          validator.send(:configure_pod_targets, [aggregate_target], '9.0')
-          debug_configuration_one.build_settings['SWIFT_VERSION'].should == '4.0'
-          debug_configuration_two.build_settings['SWIFT_VERSION'].should == '3.2'
+          validator.used_swift_version.should.nil?
         end
       end
     end
